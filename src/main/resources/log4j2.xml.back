@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- log4j2配置文件使用步骤： -->
+<!-- 1. 引用log4j2的依赖库，本文件放入resources目录 -->
+<!-- 3. 类加注解： @Slf4j -->
+<!-- 4. if(log.isDebugEnabled()) { log.debug("getAuthentication cost time
+	in ms: {}", (end - start)); }; -->
+<!-- 5. springboot 配置： logging.config=classpath:log4j2.xml -->
+<!-- 6. 必要保留的日志，增加独立logger和appender-ref -->
+<!-- 6. 日志增加2个jvm设置参数：sai.level 和reserve.level， -Dlog4j2.level=warn -Dsai.level=info -Dreserve.level=info-->
+<!-- 5. 可选：异步打印：-DLog4jContextSelector=org.apache.logging.log4j.core.async.AsyncLoggerContextSelector
+	-Dlog4j2.asyncQueueFullPolicy=Discard -Dlog4j2.discardThreshold=INFO -Dlog4j2.asyncLoggerConfigRingBufferSize=16384
+	-Dlog4j2.asyncLoggerRingBufferSize=16384 -->
+
+<Configuration status="info" name="runtime" packages="">
+	<Properties>
+		<Property name="log-path">logs/${env:HOSTNAME:-}</Property>
+		<Property name="LOG_PATTERN"
+			value="[%X{traceId}] [%-5level] %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %c{1.}[%M:%L] - %m%n" />
+	</Properties>
+	<Appenders>
+		<!-- 本地文件日志 每个100M，最多100个滚动 -->
+		<RollingFile name="file-log"
+			fileName="${log-path}/runtime.log"
+			filePattern="${log-path}/runtime-%i.log" append="true">
+			<ThresholdFilter level="info" onMatch="ACCEPT" onMismatch="DENY"/>
+			<PatternLayout>
+				<Pattern>${LOG_PATTERN}</Pattern>
+			</PatternLayout>
+			<JSONLayout compact="true" eventEol="true">
+				<KeyValuePair key="app.id" value="${sys:app.id}" />
+				<KeyValuePair key="env" value="${sys:env}" />
+				<KeyValuePair key="traceId" value="${ctx:traceId}"/>
+			</JSONLayout>
+			<Policies>
+				<SizeBasedTriggeringPolicy size="100 MB" />
+			</Policies>
+			<DefaultRolloverStrategy max="100"></DefaultRolloverStrategy>
+		</RollingFile>
+		<!-- kafka失败时日志 -->
+
+		<RollingFile name="failoverKafkaLog"
+			fileName="${log-path}/failoverKafka.log"
+			filePattern="${log-path}/failoverKafka.%d{yyyy-MM-dd}.log">
+			<ThresholdFilter level="INFO" onMatch="ACCEPT"
+				onMismatch="DENY" />
+			<JSONLayout compact="true" eventEol="true">
+				<KeyValuePair key="app.id" value="${sys:app.id}" />
+				<KeyValuePair key="env" value="${sys:env}" />
+				<KeyValuePair key="traceId" value="${ctx:traceId}"/>
+			</JSONLayout>
+			<PatternLayout>
+				<Pattern>${LOG_PATTERN}</Pattern>
+			</PatternLayout>
+			<Policies>
+				<TimeBasedTriggeringPolicy />
+			</Policies>
+		</RollingFile>
+		<!-- 输出日志到Kafka -->
+		<Kafka name="kafka" topic="azero.log.runtime"
+			ignoreExceptions="false" syncSend="false">
+			<ThresholdFilter level="debug" onMatch="ACCEPT"
+				onMismatch="DENY" />
+			<JSONLayout compact="true" eventEol="true">
+				<KeyValuePair key="time"
+					value="$${date:yyyy-MM-dd'T'HH:mm:ss.SSS}" />
+				<KeyValuePair key="app.id" value="${sys:app.id}" />
+				<KeyValuePair key="env" value="${sys:env}" />
+				<KeyValuePair key="traceId" value="${ctx:traceId}"/>
+			</JSONLayout>
+			<PatternLayout pattern="{${LOG_PATTERN}}" />
+			<Property name="bootstrap.servers">${sys:bootstrap.servers}
+			</Property>
+
+			<Property name="request.timeout.ms">5000</Property>
+			<Property name="transaction.timeout.ms">5000</Property>
+			<Property name="max.block.ms">2000</Property>
+			<Property name="batch.size">40960</Property>
+			<Property name="linger.ms">1000</Property>
+		</Kafka>
+		<Failover name="failover" primary="kafka"
+			retryIntervalSeconds="60">
+			<Failovers>
+				<AppenderRef ref="failoverKafkaLog" />
+			</Failovers>
+		</Failover>
+		<Console name="console" target="SYSTEM_OUT">
+			<PatternLayout pattern="${LOG_PATTERN}" >
+			</PatternLayout>
+		</Console>
+	</Appenders>
+	<Loggers>
+		<Root level="${sys:log4j2.level:-INFO}" additivity="false">
+			<appender-ref ref="console" />
+			<appender-ref ref="file-log" />
+			<appender-ref ref="kafka" />
+		</Root>
+		<!-- 公司内部类的日志 -->
+		<Logger name="com.soundai.nat" level="${sys:sai.level:-INFO}"
+			additivity="false">
+			<appender-ref ref="console" />
+			<appender-ref ref="file-log" />
+			<appender-ref ref="kafka" />
+		</Logger>
+		<!-- 必须保留的日志，例如请求接口日志 -->
+		<Logger
+			name="com.soundai.nat.common.framework.aspectj.WebLogAspect"
+			level="${sys:reserve.level:-INFO}" additivity="false">
+			<appender-ref ref="console" />
+			<appender-ref ref="file-log" />
+			<appender-ref ref="kafka" />
+		</Logger>
+		<!--过滤掉spring和org.apache.kafka的一些无用的DEBUG信息 -->
+		<Logger name="org.mongodb" level="info" additivity="false">
+		</Logger>
+		<Logger name="org.apache.kafka" level="info" additivity="false">
+		</Logger>
+		<Logger name="org.springframework" level="info"
+			additivity="false" />
+		<Logger name="org.apache.kafka" level="info" additivity="false">
+		</Logger>
+		<Logger name="com.ctrip.framework.apollo" level="info"
+			additivity="false" />
+		<Logger name="org.apache.http" level="info" additivity="false" />
+		<Logger name="io.lettuce" level="info" additivity="false" />
+
+	</Loggers>
+</Configuration>
